@@ -6,13 +6,67 @@ import { conversationCriteria, turnCriteria } from '../criteria.config';
 import ReactMarkdown from 'react-markdown';
 import { createPortal } from 'react-dom';
 
-function getTurnPairs(conv: { role: string; content: string }[]) {
+function getTurnPairs(conv: { role: string; content: string; tool_calls?: any[]; tool_call_id?: string }[]) {
   const pairs = [];
-  for (let i = 0; i < conv.length - 1; i += 2) {
-    if (conv[i].role === 'user' && conv[i + 1]?.role === 'assistant') {
-      pairs.push([conv[i], conv[i + 1]]);
+  let i = 0;
+  
+  while (i < conv.length) {
+    const currentTurn = conv[i];
+    
+    if (currentTurn.role === 'user') {
+      // Start a new turn segment
+      const turnSegment = [currentTurn];
+      let j = i + 1;
+      
+      // Look for the complete turn: user -> assistant (with tool calls) -> tool responses -> final assistant response
+      while (j < conv.length) {
+        const nextTurn = conv[j];
+        
+        if (nextTurn.role === 'assistant') {
+          // Add the assistant turn
+          turnSegment.push(nextTurn);
+          
+          // Check if this assistant turn has tool calls
+          if (nextTurn.tool_calls && nextTurn.tool_calls.length > 0) {
+            // Look for tool responses that match the tool calls
+            j++;
+            while (j < conv.length && conv[j].role === 'tool') {
+              turnSegment.push(conv[j]);
+              j++;
+            }
+            
+            // Look for the final assistant response after tool responses
+            if (j < conv.length && conv[j].role === 'assistant') {
+              turnSegment.push(conv[j]);
+              j++;
+            }
+          } else {
+            // No tool calls, just assistant response
+            j++;
+          }
+          
+          // We've completed this turn, break out
+          break;
+        } else if (nextTurn.role === 'tool') {
+          // Skip tool responses that don't belong to this turn
+          j++;
+        } else {
+          // Unexpected role, break
+          break;
+        }
+      }
+      
+      // Add the complete turn segment
+      if (turnSegment.length > 1) { // At least user + assistant
+        pairs.push(turnSegment);
+      }
+      
+      i = j;
+    } else {
+      i++;
     }
   }
+  
   return pairs;
 }
 
@@ -109,7 +163,20 @@ export default function AnnotatePage() {
   const [showFinishDialog, setShowFinishDialog] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [conversation, setConversation] = useState<{ role: string; content: string; turnId?: string }[]>([]);
+  const [conversation, setConversation] = useState<{ 
+    role: string; 
+    content: string; 
+    turnId?: string;
+    tool_calls?: Array<{
+      id: string;
+      type: string;
+      function: {
+        name: string;
+        arguments: string;
+      };
+    }>;
+    tool_call_id?: string;
+  }[]>([]);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
   const [saveError, setSaveError] = useState('');
   // Add hovered state above the criteria rendering loop
@@ -117,6 +184,7 @@ export default function AnnotatePage() {
   const [validationMessage, setValidationMessage] = useState('');
   const [encouragementMessage, setEncouragementMessage] = useState('');
   const [showCelebration, setShowCelebration] = useState(false);
+  const [showFullConversation, setShowFullConversation] = useState(false);
 
   // Fetch the specific conversation by conversationId
   useEffect(() => {
@@ -148,7 +216,20 @@ export default function AnnotatePage() {
       });
   }, [conversationId]);
 
-  type Turn = { role: string; content: string; turnId?: string };
+  type Turn = { 
+    role: string; 
+    content: string; 
+    turnId?: string;
+    tool_calls?: Array<{
+      id: string;
+      type: string;
+      function: {
+        name: string;
+        arguments: string;
+      };
+    }>;
+    tool_call_id?: string;
+  };
   const turnPairs = getTurnPairs(conversation as Turn[]) as unknown as [Turn, Turn][];
   const isSingleTurnConversation = turnPairs.length === 1;
   const LOCAL_STORAGE_KEY = 'annotationWizardProgress';
@@ -164,6 +245,19 @@ export default function AnnotatePage() {
       setTimeout(() => setEncouragementMessage(''), 5000);
     }
   }, []);
+
+  // Keyboard shortcut for toggling full conversation view
+  useEffect(() => {
+    const handleKeyPress = (e: KeyboardEvent) => {
+      if (e.key === 'c' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        setShowFullConversation(!showFullConversation);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyPress);
+    return () => window.removeEventListener('keydown', handleKeyPress);
+  }, [showFullConversation]);
 
   // Restore state from backend or localStorage on mount
   useEffect(() => {
@@ -431,6 +525,7 @@ export default function AnnotatePage() {
       }
     } else if (step === 'turns' && turnIndex === turnPairs.length - 1) {
       setStep('conversation');
+      setShowFullConversation(false); // Hide full conversation view when moving to conversation level
       showEncouragement('milestone'); // Moving to conversation step
     } else if (step === 'conversation') {
       setShowFinishDialog(true);
@@ -536,7 +631,7 @@ export default function AnnotatePage() {
 
   return (
     <main className="min-h-screen bg-gray-50 flex flex-col items-center font-sans">
-      <header className="w-full max-w-7xl sticky top-0 z-20 bg-gray-50 border-b border-gray-200 px-4 py-4 flex flex-col gap-2">
+      <header className="w-full max-w-8xl sticky top-0 z-20 bg-gray-50 border-b border-gray-200 px-4 py-4 flex flex-col gap-2">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold text-gray-800 tracking-tight">Annotation Wizard</h1>
           <div className="flex items-center gap-4">
@@ -551,38 +646,154 @@ export default function AnnotatePage() {
         </div>
         <ProgressBar step={currentStep} total={totalSteps} />
       </header>
-      <div className="w-full max-w-7xl flex-1 flex flex-col md:flex-row gap-0 md:gap-8 px-2 md:px-4 py-8 h-[calc(100vh-110px)]">
-        <section className="md:w-7/12 w-full mb-8 md:mb-0 h-full flex flex-col">
-          <div className="bg-white shadow-lg rounded-xl p-6 h-full flex flex-col">
+      <div className="w-full max-w-8xl flex-1 flex flex-col md:flex-row gap-0 md:gap-8 px-2 md:px-4 py-8">
+        <section className="md:w-7/12 w-full mb-8 md:mb-0 flex flex-col">
+          <div className="bg-white shadow-lg rounded-xl p-6 flex flex-col sticky top-4 max-h-[calc(100vh-140px)] overflow-y-auto">
             {(step === 'conversation' || isSingleTurnConversation) ? (
               <>
                 <h2 className="text-lg font-semibold mb-4 text-blue-700">Full Conversation</h2>
-                <div className="space-y-3 overflow-y-auto flex-1 pr-2">
+                <div className="space-y-3 pr-2">
                   {conversation.map((turn, idx) => (
-                    <div key={idx} className={`flex items-start gap-2 p-3 rounded-lg transition-all duration-200 hover:shadow-md ${turn.role === 'user' ? 'bg-blue-50 border border-blue-200' : 'bg-green-50 border border-green-200'}`}> 
-                      <span className={`font-bold capitalize ${turn.role === 'user' ? 'text-blue-700' : 'text-green-700'}`}>{turn.role}:</span>
-                      <span className="text-gray-800"><ReactMarkdown>{turn.content}</ReactMarkdown></span>
+                    <div key={idx} className={`flex items-start gap-2 p-3 rounded-lg transition-all duration-200 hover:shadow-md ${
+                      turn.role === 'user' ? 'bg-blue-50 border border-blue-200' : 
+                      turn.role === 'assistant' ? 'bg-green-50 border border-green-200' :
+                      turn.role === 'tool' ? 'bg-purple-50 border border-purple-200' :
+                      'bg-gray-50 border border-gray-200'
+                    }`}> 
+                      <span className={`font-bold capitalize ${
+                        turn.role === 'user' ? 'text-blue-700' : 
+                        turn.role === 'assistant' ? 'text-green-700' :
+                        turn.role === 'tool' ? 'text-purple-700' :
+                        'text-gray-700'
+                      }`}>{turn.role}:</span>
+                      <div className="flex-1">
+                        <div className="text-gray-800">
+                          <ReactMarkdown>{turn.content}</ReactMarkdown>
+                        </div>
+                        {turn.tool_calls && turn.tool_calls.length > 0 && (
+                          <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-sm">
+                            <div className="font-semibold text-yellow-800 mb-1">Tool Calls:</div>
+                            {turn.tool_calls.map((toolCall: any, toolIdx: number) => (
+                              <div key={toolIdx} className="mb-1">
+                                <span className="font-medium text-yellow-700">Function:</span> {toolCall.function.name}
+                                <br />
+                                <span className="font-medium text-yellow-700">Arguments:</span> {toolCall.function.arguments}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
               </>
             ) : (
               <>
-                <h2 className="text-lg font-semibold mb-4 text-blue-700">
-                  {isSingleTurnConversation ? 'Single Turn Conversation' : `Turn ${turnIndex + 1} of ${turnPairs.length}`}
-                </h2>
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-lg font-semibold text-blue-700">
+                    {isSingleTurnConversation ? 'Single Turn Conversation' : `Turn ${turnIndex + 1} of ${turnPairs.length}`}
+                  </h2>
+                  <button
+                    onClick={() => setShowFullConversation(!showFullConversation)}
+                    className="flex items-center gap-2 px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition-colors"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                    </svg>
+                    {showFullConversation ? 'Hide Full Conversation' : 'View Full Conversation'}
+                    <span className="text-xs text-gray-500">(Ctrl+C)</span>
+                  </button>
+                </div>
                 {/* Display turnId for the current turn pair */}
                 <div className="mb-2 text-xs text-gray-500">
                   <span>Turn IDs: </span>
                   {turnPairs[turnIndex].map((turn, idx) => (
-                    <span key={idx} className="inline-block mr-2">{turn.turnId ?? '(no id)'}</span>
+                    <span key={idx} className="inline-block mr-2">
+                      {turn.role}: {turn.turnId ?? '(no id)'}
+                    </span>
                   ))}
-                </div>
-                <div className="space-y-3 overflow-y-auto flex-1 pr-2">
-                  {turnPairs[turnIndex].map((turn, idx) => (
-                    <div key={idx} className={`flex items-start gap-2 p-3 rounded-lg border-2 ${turn.role === 'user' ? 'bg-blue-50 border-blue-200' : 'bg-green-50 border-green-200'} ${idx === 1 ? 'ring-2 ring-blue-400' : ''}`}> 
-                      <span className={`font-bold capitalize ${turn.role === 'user' ? 'text-blue-700' : 'text-green-700'}`}>{turn.role}:</span>
-                      <span className="text-gray-800"><ReactMarkdown>{turn.content}</ReactMarkdown></span>
+                                  </div>
+                  {showFullConversation && (
+                    <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-lg shadow-sm">
+                      <h3 className="text-sm font-semibold text-amber-800 mb-3 flex items-center gap-2">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        Full Conversation Context
+                      </h3>
+                      <div className="space-y-2 max-h-80 overflow-y-auto text-xs">
+                        {conversation.map((turn, idx) => {
+                          // Check if this turn is part of the current turn being annotated
+                          const currentTurnTurns = turnPairs[turnIndex] || [];
+                          const isCurrentTurn = currentTurnTurns.some(t => t.turnId === turn.turnId);
+                          
+                          return (
+                            <div key={idx} className={`flex items-start gap-2 p-2 rounded ${
+                              turn.role === 'user' ? 'bg-blue-50' : 
+                              turn.role === 'assistant' ? 'bg-green-50' :
+                              turn.role === 'tool' ? 'bg-purple-50' :
+                              'bg-gray-50'
+                            } ${isCurrentTurn ? 'ring-2 ring-blue-400 bg-blue-100' : ''}`}>
+                              <span className={`font-bold capitalize text-xs ${
+                                turn.role === 'user' ? 'text-blue-700' : 
+                                turn.role === 'assistant' ? 'text-green-700' :
+                                turn.role === 'tool' ? 'text-purple-700' :
+                                'text-gray-700'
+                              }`}>{turn.role}:</span>
+                              <span className="text-gray-800 text-xs line-clamp-2">
+                                {typeof turn.content === 'string' ? (turn.content.length > 100 ? `${turn.content.substring(0, 100)}...` : turn.content) : '[No content]'}
+                              </span>
+                              {isCurrentTurn && (
+                                <span className="ml-auto text-blue-600 text-xs font-semibold">← Ongoing Conversation</span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  {showFullConversation && (
+                    <div className="mb-4 p-3 bg-blue-100 border border-blue-300 rounded-lg">
+                      <div className="flex items-center gap-2 text-blue-800 text-sm font-semibold">
+                        {/* <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                        </svg> */}
+                        ↓ Below is the Current Turn to be Rated ↓
+                      </div>
+                    </div>
+                  )}
+                  <div className="space-y-3 pr-2">
+                    {turnPairs[turnIndex].map((turn, idx) => (
+                    <div key={idx} className={`flex items-start gap-2 p-3 rounded-lg border-2 ${
+                      turn.role === 'user' ? 'bg-blue-50 border-blue-200' : 
+                      turn.role === 'assistant' ? 'bg-green-50 border-green-200' :
+                      turn.role === 'tool' ? 'bg-purple-50 border-purple-200' :
+                      'bg-gray-50 border-gray-200'
+                    } ${idx === 1 ? 'ring-2 ring-blue-400' : ''}`}> 
+                      <span className={`font-bold capitalize ${
+                        turn.role === 'user' ? 'text-blue-700' : 
+                        turn.role === 'assistant' ? 'text-green-700' :
+                        turn.role === 'tool' ? 'text-purple-700' :
+                        'text-gray-700'
+                      }`}>{turn.role}:</span>
+                      <div className="flex-1">
+                        <div className="text-gray-800">
+                          <ReactMarkdown>{turn.content}</ReactMarkdown>
+                        </div>
+                        {turn.tool_calls && turn.tool_calls.length > 0 && (
+                          <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-sm">
+                            <div className="font-semibold text-yellow-800 mb-1">Tool Calls:</div>
+                            {turn.tool_calls.map((toolCall: any, toolIdx: number) => (
+                              <div key={toolIdx} className="mb-1">
+                                <span className="font-medium text-yellow-700">Function:</span> {toolCall.function.name}
+                                <br />
+                                <span className="font-medium text-yellow-700">Arguments:</span> {toolCall.function.arguments}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -591,17 +802,18 @@ export default function AnnotatePage() {
           </div>
         </section>
         <div className="hidden md:block w-px bg-gray-200 mx-2"></div>
-        <section className="md:w-5/12 w-full h-full flex flex-col">
-          <div className="bg-white shadow-lg rounded-xl p-6 h-full flex flex-col">
+        <section className="md:w-5/12 w-full flex flex-col">
+          <div className="bg-white shadow-lg rounded-xl p-6 flex flex-col">
+
             <h3 className="font-semibold mb-4 text-gray-700">{(step === 'conversation' || isSingleTurnConversation) ? 'Conversation-level Criteria' : 'Turn-level Criteria'}</h3>
             <div className="mb-6 space-y-6">
               {((step === 'conversation' || isSingleTurnConversation) ? conversationCriteria : turnCriteria).map((crit) => (
-                <div key={crit.id} className="flex flex-col gap-1">
+                <div key={crit.id} className="flex flex-col gap-2">
                   <label className="font-medium text-gray-800 flex items-center">
                     {crit.label}
                     <Tooltip text={crit.description} label={crit.label} />
                   </label>
-                  <div className="flex gap-3 mt-1">
+                  <div className="flex gap-3 mt-2">
                     {crit.type === 'rating' && crit.options.map((opt: number) => (
                       <div key={opt} className="relative inline-block">
                         <button

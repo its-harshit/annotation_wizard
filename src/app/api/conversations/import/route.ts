@@ -21,7 +21,7 @@ export async function POST(req: Request) {
     ...c,
     conversation: c.conversation.map((turn: any) => ({
       ...turn,
-      turnId: randomUUID(),
+      turnId: turn.turnId || randomUUID(), // Preserve existing turnId if present
     })),
     projectId: projectObjectId,
     createdAt: new Date(),
