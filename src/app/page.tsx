@@ -81,8 +81,8 @@ export default function Home() {
   const { data: session } = useSession();
   const [step, setStep] = useState<'conversation' | 'turns'>('conversation');
   const [turnIndex, setTurnIndex] = useState(0);
-  const [conversationRatings, setConversationRatings] = useState<any>({});
-  const [turnRatings, setTurnRatings] = useState<any[]>([]);
+  const [conversationRatings, setConversationRatings] = useState<Record<string, number | null>>({});
+  const [turnRatings, setTurnRatings] = useState<Array<Record<string, number | null>>>([]);
   const [conversationComment, setConversationComment] = useState('');
   const [turnComments, setTurnComments] = useState<string[]>([]);
   const [conversationSkipped, setConversationSkipped] = useState(false);
@@ -92,7 +92,9 @@ export default function Home() {
   const [error, setError] = useState('');
   const [conversation, setConversation] = useState<{ role: string; content: string }[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [saveError, setSaveError] = useState('');
 
   const LOCAL_STORAGE_KEY = 'annotationWizardProgress';
@@ -150,13 +152,13 @@ export default function Home() {
   }, [step, turnIndex, conversationRatings, turnRatings, conversationComment, turnComments, conversationSkipped, turnSkipped]);
 
   // Handlers
-  const handleConversationRating = (id: string, value: any) => {
-    setConversationRatings((prev: any) => ({
+  const handleConversationRating = (id: string, value: number) => {
+    setConversationRatings((prev: Record<string, number | null>) => ({
       ...prev,
       [id]: prev[id] === value ? null : value,
     }));
   };
-  const handleTurnRating = (id: string, value: any) => {
+  const handleTurnRating = (id: string, value: number) => {
     setTurnRatings((prev) => {
       const updated = [...prev];
       updated[turnIndex] = {
@@ -240,10 +242,11 @@ export default function Home() {
       setConversationSkipped(false);
       setTurnSkipped([]);
       localStorage.removeItem(LOCAL_STORAGE_KEY);
-    } catch (err: any) {
+    } catch (err: unknown) {
       setSaveStatus('error');
-      setSaveError(err.message || 'Failed to save annotation');
-      alert('Failed to save annotation: ' + (err.message || 'Unknown error'));
+      const errorMessage = err instanceof Error ? err.message : 'Failed to save annotation';
+      setSaveError(errorMessage);
+      alert('Failed to save annotation: ' + errorMessage);
     }
   };
 

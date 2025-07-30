@@ -6,8 +6,8 @@ import { useRouter } from 'next/navigation';
 export default function ProjectsPage() {
   const { data: session } = useSession();
   const router = useRouter();
-  const [projects, setProjects] = useState<any[]>([]);
-  const [progress, setProgress] = useState<any[]>([]);
+  const [projects, setProjects] = useState<Array<{ _id: string; name: string; description: string; members: string[]; createdBy: string }>>([]);
+  const [progress, setProgress] = useState<Array<{ projectId: string; name: string; totalConversations: number; annotatedCount: number }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showForm, setShowForm] = useState(false);
@@ -17,7 +17,7 @@ export default function ProjectsPage() {
   const [createError, setCreateError] = useState('');
 
   const userId = session?.user?.email;
-  const isAdmin = (session?.user as any)?.role === 'admin';
+  const isAdmin = session?.user ? ((session.user as { role?: string }).role) === 'admin' : false;
 
   useEffect(() => {
     setLoading(true);
@@ -27,7 +27,7 @@ export default function ProjectsPage() {
         setProjects(data);
         setLoading(false);
       })
-      .catch(err => {
+      .catch(() => {
         setError('Failed to load projects');
         setLoading(false);
       });
@@ -40,7 +40,7 @@ export default function ProjectsPage() {
       .then(data => setProgress(data));
   }, [userId]);
 
-  const userProjects = projects.filter((p) => p.members?.includes(userId));
+  const userProjects = projects.filter((p) => p.members?.includes(userId || ''));
 
   function getProjectProgress(projectId: string) {
     return progress.find((p) => p.projectId === projectId || p.projectId?.toString() === projectId?.toString());

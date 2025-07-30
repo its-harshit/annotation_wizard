@@ -6,11 +6,11 @@ import { useRouter } from 'next/navigation';
 export default function AdminDashboard() {
   const { data: session, status } = useSession();
   const router = useRouter();
-  const [users, setUsers] = useState<any[]>([]);
-  const [projects, setProjects] = useState<any[]>([]);
+  const [users, setUsers] = useState<Array<{ _id: string; email: string; role: string }>>([]);
+  const [projects, setProjects] = useState<Array<{ _id: string; name: string; description: string; members: string[] }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [progress, setProgress] = useState<any[]>([]);
+  const [progress, setProgress] = useState<Array<{ userId: string; projectId: string; projectName: string; totalConversations: number; annotatedCount: number }>>([]);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [projectActionLoading, setProjectActionLoading] = useState<string | null>(null);
@@ -19,7 +19,7 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     if (status === 'loading') return;
-    if ((session?.user as any)?.role !== 'admin') {
+    if (!session?.user || ((session.user as { role?: string }).role) !== 'admin') {
       router.replace('/projects');
       return;
     }
@@ -57,8 +57,9 @@ export default function AdminDashboard() {
         const users = await fetch('/api/users').then(r => r.json());
         setUsers(users);
       }
-    } catch (err: any) {
-      setActionError(err.message || 'Failed to update role');
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to update role';
+      setActionError(errorMessage);
     }
     setActionLoading(null);
   }
@@ -84,8 +85,9 @@ export default function AdminDashboard() {
         setProjects(projects);
         setProgress(progress);
       }
-    } catch (err: any) {
-      setActionError(err.message || 'Failed to remove from project');
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to remove from project';
+      setActionError(errorMessage);
     }
     setActionLoading(null);
   }
@@ -111,8 +113,9 @@ export default function AdminDashboard() {
         setProjects(projects);
         setProgress(progress);
       }
-    } catch (err: any) {
-      setProjectActionError(err.message || 'Failed to delete project');
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to delete project';
+      setProjectActionError(errorMessage);
     }
     setProjectActionLoading(null);
   }
@@ -138,7 +141,7 @@ export default function AdminDashboard() {
           </thead>
           <tbody className="bg-white divide-y divide-gray-100">
             {users.map(user => {
-              const userProjects = projects.filter((p: any) => p.members?.includes(user.email));
+              const userProjects = projects.filter((p) => p.members?.includes(user.email));
               return (
                 <tr key={user._id}>
                   <td className="px-4 py-2 text-blue-900 font-semibold">{user.email}</td>
@@ -152,8 +155,8 @@ export default function AdminDashboard() {
                   <td className="px-4 py-2">
                     {userProjects.length === 0 && <span className="text-gray-400 text-xs">None</span>}
                     <ul className="space-y-1">
-                      {userProjects.map((proj: any) => {
-                        const prog = progress.find((p: any) => p.userId === user.email && (p.projectId === proj._id || p.projectId?.toString() === proj._id?.toString()));
+                      {userProjects.map((proj) => {
+                        const prog = progress.find((p) => p.userId === user.email && (p.projectId === proj._id || p.projectId?.toString() === proj._id?.toString()));
                         const completed = prog?.annotatedCount || 0;
                         const total = prog?.totalConversations || 0;
                         return (
@@ -178,7 +181,7 @@ export default function AdminDashboard() {
                       >
                         {user.role === 'admin' ? 'Demote to Annotator' : 'Promote to Admin'}
                       </button>
-                      {userProjects.map((proj: any) => (
+                      {userProjects.map((proj) => (
                         <button
                           key={proj._id}
                           className="text-xs text-red-600 hover:underline disabled:opacity-50"
@@ -202,7 +205,7 @@ export default function AdminDashboard() {
         Projects Management
       </h2>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-        {projects.map((project: any) => (
+        {projects.map((project) => (
           <div key={project._id} className="bg-white rounded-xl shadow p-6 flex flex-col gap-3 border border-gray-100">
             <div className="flex items-center gap-2 mb-1">
               <span className="font-semibold text-lg text-blue-900 flex-1 truncate">{project.name}</span>

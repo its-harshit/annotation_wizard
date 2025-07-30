@@ -17,9 +17,9 @@ export async function POST(req: Request) {
   }
   const client = await clientPromise;
   const db = client.db(process.env.DB_NAME);
-  const docs = conversations.map((c: any) => ({
+  const docs = conversations.map((c: Record<string, unknown>) => ({
     ...c,
-    conversation: c.conversation.map((turn: any) => ({
+    conversation: (c.conversation as Array<Record<string, unknown>>).map((turn: Record<string, unknown>) => ({
       ...turn,
       turnId: turn.turnId || randomUUID(), // Preserve existing turnId if present
     })),

@@ -18,7 +18,7 @@ export async function GET(req: Request) {
   }
   const client = await clientPromise;
   const db = client.db(process.env.DB_NAME);
-  const query: any = { projectId: projectObjectId };
+  const query: Record<string, unknown> = { projectId: projectObjectId };
   if (userId) query.userId = userId;
   if (status) query.status = status;
   const annotations = await db.collection('annotations').find(query).toArray();

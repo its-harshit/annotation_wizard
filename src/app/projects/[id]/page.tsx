@@ -7,9 +7,9 @@ export default function ProjectDetailPage() {
   const { id: projectId } = useParams();
   const { data: session } = useSession();
   const router = useRouter();
-  const [conversations, setConversations] = useState<any[]>([]);
-  const [annotations, setAnnotations] = useState<any[]>([]);
-  const [project, setProject] = useState<any>(null);
+  const [conversations, setConversations] = useState<Array<{ _id: string; conversation: Array<{ role: string; content: string }> }>>([]);
+  const [annotations, setAnnotations] = useState<Array<{ conversationId: string; status: string }>>([]);
+  const [project, setProject] = useState<{ _id: string; name: string; description: string; members: string[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [importing, setImporting] = useState(false);
@@ -20,7 +20,7 @@ export default function ProjectDetailPage() {
   const [memberError, setMemberError] = useState('');
   const [memberSuccess, setMemberSuccess] = useState('');
   const userId = session?.user?.email;
-  const isAdmin = (session?.user as any)?.role === 'admin';
+  const isAdmin = session?.user ? ((session.user as { role?: string }).role) === 'admin' : false;
 
   useEffect(() => {
     if (!projectId) return;
@@ -32,7 +32,7 @@ export default function ProjectDetailPage() {
       fetch(`/api/annotations/list?projectId=${projectId}&userId=${encodeURIComponent(userId || '')}`).then(res => res.json()),
     ])
       .then(([projects, convos, annots]) => {
-        const proj = projects.find((p: any) => p._id === projectId || p._id?.toString() === projectId?.toString());
+        const proj = projects.find((p: { _id: string }) => p._id === projectId || p._id?.toString() === projectId?.toString());
         setProject(proj);
         setMembers(proj?.members || []);
         setConversations(convos);
@@ -46,7 +46,7 @@ export default function ProjectDetailPage() {
   }, [projectId, userId, importing]);
 
   function getStatus(convoId: string) {
-    const annot = annotations.find((a: any) => a.conversationId === convoId || a.conversationId?.toString() === convoId?.toString());
+    const annot = annotations.find((a: { conversationId: string }) => a.conversationId === convoId || a.conversationId?.toString() === convoId?.toString());
     if (!annot) return 'Not started';
     if (annot.status === 'completed') return 'Completed';
     if (annot.status === 'in_progress') return 'In Progress';
@@ -81,8 +81,9 @@ export default function ProjectDetailPage() {
         setImportError(data.error || 'Import failed');
         setImporting(false);
       }
-    } catch (err: any) {
-      setImportError(err.message || 'Import failed');
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Import failed';
+      setImportError(errorMessage);
       setImporting(false);
     }
   }
@@ -102,7 +103,7 @@ export default function ProjectDetailPage() {
       setNewMember('');
       // Refresh members
       fetch(`/api/projects`).then(res => res.json()).then(projects => {
-        const proj = projects.find((p: any) => p._id === projectId || p._id?.toString() === projectId?.toString());
+        const proj = projects.find((p: { _id: string }) => p._id === projectId || p._id?.toString() === projectId?.toString());
         setMembers(proj?.members || []);
       });
     } else {
@@ -123,7 +124,7 @@ export default function ProjectDetailPage() {
       setMemberSuccess('Member removed!');
       // Refresh members
       fetch(`/api/projects`).then(res => res.json()).then(projects => {
-        const proj = projects.find((p: any) => p._id === projectId || p._id?.toString() === projectId?.toString());
+        const proj = projects.find((p: { _id: string }) => p._id === projectId || p._id?.toString() === projectId?.toString());
         setMembers(proj?.members || []);
       });
     } else {
@@ -148,8 +149,9 @@ export default function ProjectDetailPage() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-    } catch (err: any) {
-      alert('Export failed: ' + (err.message || err));
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Export failed';
+      alert('Export failed: ' + errorMessage);
     }
   }
 

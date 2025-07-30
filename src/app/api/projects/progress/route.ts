@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import clientPromise from '@/lib/mongodb';
-import { ObjectId } from 'mongodb';
+
 
 export async function GET(req: Request) {
   const url = new URL(req.url!);
@@ -28,7 +28,7 @@ export async function GET(req: Request) {
   }
 
   // If no userId, return progress for all users in all projects
-  const allProgress: any[] = [];
+  const allProgress: Array<Record<string, unknown>> = [];
   for (const user of users) {
     for (const project of projects) {
       if (!project.members?.includes(user.email)) continue;

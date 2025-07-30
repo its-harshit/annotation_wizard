@@ -1,13 +1,14 @@
 "use client";
-import { useState } from 'react';
+import { useState, Suspense } from 'react';
 import { signIn } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
-export default function SignIn() {
+function SignInContent() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const router = useRouter();
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const params = useSearchParams();
 
   async function handleSubmit(e: React.FormEvent) {
@@ -40,5 +41,13 @@ export default function SignIn() {
         <div className="text-sm text-gray-600 mt-2">Don&apos;t have an account? <a href="/auth/signup" className="text-blue-600 hover:underline">Sign up</a></div>
       </form>
     </main>
+  );
+}
+
+export default function SignIn() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <SignInContent />
+    </Suspense>
   );
 } 

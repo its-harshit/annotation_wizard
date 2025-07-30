@@ -2,8 +2,8 @@ import NextAuth from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import { MongoDBAdapter } from '@next-auth/mongodb-adapter';
 import clientPromise from '@/lib/mongodb';
-import { compare, hash } from 'bcryptjs';
-import { MongoClient } from 'mongodb';
+import { compare } from 'bcryptjs';
+
 
 const DB_NAME = process.env.DB_NAME || 'annotation_wizard';
 
@@ -13,14 +13,7 @@ async function getUserByEmail(email: string) {
   return db.collection('users').findOne({ email });
 }
 
-async function createUser(email: string, password: string) {
-  const client = await clientPromise;
-  const db = client.db(DB_NAME);
-  const hashed = await hash(password, 10);
-  const user = { email, password: hashed, role: 'annotator' };
-  await db.collection('users').insertOne(user);
-  return user;
-}
+
 
 const handler = NextAuth({
   adapter: MongoDBAdapter(clientPromise),
@@ -47,13 +40,13 @@ const handler = NextAuth({
   callbacks: {
     async jwt({ token, user }) {
       if (user && 'role' in user) {
-        token.role = (user as any).role;
+        token.role = (user as { role: string }).role;
       }
       return token;
     },
     async session({ session, token }) {
       if (token && session.user) {
-        (session.user as any).role = token.role;
+        (session.user as { role?: string }).role = token.role as string;
       }
       return session;
     },

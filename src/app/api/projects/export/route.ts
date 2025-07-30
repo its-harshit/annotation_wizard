@@ -21,7 +21,7 @@ export async function GET(req: Request) {
   // Get all conversations for this project
   const conversations = await db.collection('conversations').find({ projectId: projectObjectId }).toArray();
   const conversationMap = new Map(conversations.map(c => [c._id.toString(), c]));
-  const exportObjects: any[] = [];
+  const exportObjects: Array<Record<string, unknown>> = [];
   for (const ann of annotations) {
     const conv = conversationMap.get(ann.conversationId.toString());
     if (!conv) continue;

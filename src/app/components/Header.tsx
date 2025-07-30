@@ -17,8 +17,8 @@ export default function Header() {
       <div className="flex items-center gap-4">
         {status === "loading" ? null : session?.user ? (
           <>
-            <span className="text-gray-700 text-sm">{session.user.email} ({(session.user as any).role})</span>
-            {(session.user as any).role === 'admin' && (
+            <span className="text-gray-700 text-sm">{session.user.email} ({((session.user as { role?: string }).role || 'user')})</span>
+            {((session.user as { role?: string }).role) === 'admin' && (
               <Link href="/admin" className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1 rounded font-semibold text-sm">Admin</Link>
             )}
             <button

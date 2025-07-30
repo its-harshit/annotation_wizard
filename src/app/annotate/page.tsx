@@ -1,12 +1,19 @@
 "use client";
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { conversationCriteria, turnCriteria } from '../criteria.config';
 import ReactMarkdown from 'react-markdown';
 import { createPortal } from 'react-dom';
 
-function getTurnPairs(conv: { role: string; content: string; tool_calls?: any[]; tool_call_id?: string }[]) {
+function getTurnPairs(conv: { role: string; content: string; tool_calls?: Array<{
+  id: string;
+  type: string;
+  function: {
+    name: string;
+    arguments: string;
+  };
+}>; tool_call_id?: string }[]) {
   const pairs = [];
   let i = 0;
   
@@ -145,7 +152,7 @@ function Tooltip({ text, label }: { text: string, label?: string }) {
   );
 }
 
-export default function AnnotatePage() {
+function AnnotatePageContent() {
   const { data: session } = useSession();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -154,8 +161,8 @@ export default function AnnotatePage() {
   // Set initial step based on conversation length - single turn conversations go directly to conversation level
   const [step, setStep] = useState<'conversation' | 'turns'>('turns');
   const [turnIndex, setTurnIndex] = useState(0);
-  const [conversationRatings, setConversationRatings] = useState<any>({});
-  const [turnRatings, setTurnRatings] = useState<any[]>([]);
+  const [conversationRatings, setConversationRatings] = useState<Record<string, number | null>>({});
+  const [turnRatings, setTurnRatings] = useState<Array<Record<string, number | null>>>([]);
   const [conversationComment, setConversationComment] = useState('');
   const [turnComments, setTurnComments] = useState<string[]>([]);
   const [conversationSkipped, setConversationSkipped] = useState(false);
@@ -177,7 +184,9 @@ export default function AnnotatePage() {
     }>;
     tool_call_id?: string;
   }[]>([]);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [saveError, setSaveError] = useState('');
   // Add hovered state above the criteria rendering loop
   const [hovered, setHovered] = useState<{ critId: string, value: number } | null>(null);
@@ -281,7 +290,7 @@ export default function AnnotatePage() {
           setLoading(false);
           return;
         }
-      } catch (err) {
+      } catch {
         // ignore, fallback to localStorage
       }
       // Fallback: localStorage
@@ -300,7 +309,6 @@ export default function AnnotatePage() {
       setLoading(false);
     }
     restoreProgress();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversationId, projectId, session?.user?.email]);
   // Auto-save state to localStorage on change
   useEffect(() => {
@@ -436,8 +444,8 @@ export default function AnnotatePage() {
     setTimeout(() => setEncouragementMessage(''), 4000);
   };
 
-  const handleConversationRating = (id: string, value: any) => {
-    setConversationRatings((prev: any) => ({
+  const handleConversationRating = (id: string, value: number) => {
+    setConversationRatings((prev: Record<string, number | null>) => ({
       ...prev,
       [id]: prev[id] === value ? null : value,
     }));
@@ -449,7 +457,7 @@ export default function AnnotatePage() {
       showEncouragement('conversation');
     }
   };
-  const handleTurnRating = (id: string, value: any) => {
+  const handleTurnRating = (id: string, value: number) => {
     setTurnRatings((prev) => {
       const updated = [...prev];
       updated[turnIndex] = {
@@ -609,10 +617,11 @@ export default function AnnotatePage() {
         localStorage.removeItem(LOCAL_STORAGE_KEY);
         // Redirect back to project detail page
         router.push(`/projects/${projectId}`);
-      } catch (err: any) {
+      } catch (err: unknown) {
         setSaveStatus('error');
-        setSaveError(err.message || 'Failed to save annotation');
-        alert('Failed to save annotation: ' + (err.message || 'Unknown error'));
+        const errorMessage = err instanceof Error ? err.message : 'Failed to save annotation';
+        setSaveError(errorMessage);
+        alert('Failed to save annotation: ' + errorMessage);
       }
     }, 2000); // Wait 2 seconds for celebration
   };
@@ -673,7 +682,7 @@ export default function AnnotatePage() {
                         {turn.tool_calls && turn.tool_calls.length > 0 && (
                           <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-sm">
                             <div className="font-semibold text-yellow-800 mb-1">Tool Calls:</div>
-                            {turn.tool_calls.map((toolCall: any, toolIdx: number) => (
+                            {turn.tool_calls.map((toolCall, toolIdx: number) => (
                               <div key={toolIdx} className="mb-1">
                                 <span className="font-medium text-yellow-700">Function:</span> {toolCall.function.name}
                                 <br />
@@ -784,7 +793,7 @@ export default function AnnotatePage() {
                         {turn.tool_calls && turn.tool_calls.length > 0 && (
                           <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-sm">
                             <div className="font-semibold text-yellow-800 mb-1">Tool Calls:</div>
-                            {turn.tool_calls.map((toolCall: any, toolIdx: number) => (
+                            {turn.tool_calls.map((toolCall, toolIdx: number) => (
                               <div key={toolIdx} className="mb-1">
                                 <span className="font-medium text-yellow-700">Function:</span> {toolCall.function.name}
                                 <br />
@@ -970,5 +979,13 @@ export default function AnnotatePage() {
         </div>
       )}
     </main>
+  );
+}
+
+export default function AnnotatePage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <AnnotatePageContent />
+    </Suspense>
   );
 } 
