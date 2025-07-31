@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect } from 'react';
-import { conversationCriteria, turnCriteria } from './criteria.config';
+import { conversationCriteriaCategories, turnCriteria } from './criteria.config';
 import { useSession } from 'next-auth/react';
 
 function getTurnPairs(conv: { role: string; content: string }[]) {
@@ -252,7 +252,8 @@ export default function Home() {
 
   // Auto-clear skip/flag if all required ratings are filled
   React.useEffect(() => {
-    if (step === 'conversation' && conversationSkipped && !conversationCriteria.some((c) => conversationRatings[c.id] == null)) {
+    const allConversationCriteria = conversationCriteriaCategories.flatMap(category => category.criteria);
+    if (step === 'conversation' && conversationSkipped && !allConversationCriteria.some((c) => conversationRatings[c.id] == null)) {
       setConversationSkipped(false);
     }
     if (step === 'turns' && turnSkipped[turnIndex] && !turnCriteria.some((c) => turnRatings[turnIndex]?.[c.id] == null)) {
@@ -336,7 +337,7 @@ export default function Home() {
           <div className="bg-white shadow-lg rounded-xl p-6 h-full flex flex-col">
             <h3 className="font-semibold mb-4 text-gray-700">{step === 'conversation' ? 'Conversation-level Criteria' : 'Turn-level Criteria'}</h3>
             <div className="mb-6 space-y-6">
-              {(step === 'conversation' ? conversationCriteria : turnCriteria).map((crit) => (
+              {(step === 'conversation' ? conversationCriteriaCategories.flatMap(category => category.criteria) : turnCriteria).map((crit) => (
                 <div key={crit.id} className="flex flex-col gap-1">
                   <label className="font-medium text-gray-800 flex items-center">
                     {crit.label}
@@ -405,7 +406,7 @@ export default function Home() {
                 className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-semibold text-lg shadow transition disabled:opacity-50"
                 onClick={handleNext}
                 disabled={
-                  (step === 'conversation' && conversationCriteria.some((c) => conversationRatings[c.id] == null)) ||
+                  (step === 'conversation' && conversationCriteriaCategories.flatMap(category => category.criteria).some((c) => conversationRatings[c.id] == null)) ||
                   (step === 'turns' && turnCriteria.some((c) => turnRatings[turnIndex]?.[c.id] == null))
                 }
               >

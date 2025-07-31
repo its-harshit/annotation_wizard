@@ -2,7 +2,7 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { conversationCriteria, turnCriteria } from '../criteria.config';
+import { conversationCriteriaCategories, turnCriteria } from '../criteria.config';
 import ReactMarkdown from 'react-markdown';
 import { createPortal } from 'react-dom';
 
@@ -21,55 +21,23 @@ function getTurnPairs(conv: { role: string; content: string; tool_calls?: Array<
     const currentTurn = conv[i];
     
     if (currentTurn.role === 'user') {
-      // Start a new turn segment
+      // Start a new turn segment with the user message
       const turnSegment = [currentTurn];
       let j = i + 1;
       
-      // Look for the complete turn: user -> assistant (with tool calls) -> tool responses -> final assistant response
-      while (j < conv.length) {
-        const nextTurn = conv[j];
-        
-        if (nextTurn.role === 'assistant') {
-          // Add the assistant turn
-          turnSegment.push(nextTurn);
-          
-          // Check if this assistant turn has tool calls
-          if (nextTurn.tool_calls && nextTurn.tool_calls.length > 0) {
-            // Look for tool responses that match the tool calls
-            j++;
-            while (j < conv.length && conv[j].role === 'tool') {
-              turnSegment.push(conv[j]);
-              j++;
-            }
-            
-            // Look for the final assistant response after tool responses
-            if (j < conv.length && conv[j].role === 'assistant') {
-              turnSegment.push(conv[j]);
-              j++;
-            }
-          } else {
-            // No tool calls, just assistant response
-            j++;
-          }
-          
-          // We've completed this turn, break out
-          break;
-        } else if (nextTurn.role === 'tool') {
-          // Skip tool responses that don't belong to this turn
-          j++;
-        } else {
-          // Unexpected role, break
-          break;
-        }
+      // Collect all subsequent messages until we hit the next user message
+      while (j < conv.length && conv[j].role !== 'user') {
+        turnSegment.push(conv[j]);
+        j++;
       }
       
-      // Add the complete turn segment
-      if (turnSegment.length > 1) { // At least user + assistant
-        pairs.push(turnSegment);
-      }
+      // Add the complete turn segment (user + all responses)
+      pairs.push(turnSegment);
       
+      // Move to the next user message
       i = j;
     } else {
+      // Skip any non-user messages at the beginning
       i++;
     }
   }
@@ -89,24 +57,21 @@ function ProgressBar({ step, total }: { step: number; total: number }) {
   );
 }
 
-function Tooltip({ text, label }: { text: string, label?: string }) {
-  const [open, setOpen] = React.useState(false);
-  const close = React.useCallback(() => setOpen(false), []);
-  React.useEffect(() => {
-    if (!open) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') close();
+function Tooltip({ text, label, critId, onPanelOpen }: { text: string, label?: string, critId?: string, onPanelOpen?: (critId: string, position: { top: number; left: number }) => void }) {
+  const handleClick = (e: React.MouseEvent) => {
+    if (critId && onPanelOpen) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      onPanelOpen(critId, { top: rect.top, left: rect.right + 10 });
     }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, close]);
+  };
+
   return (
     <span className="ml-1 cursor-pointer relative inline-block align-middle">
       <button
         type="button"
         className="w-6 h-6 flex items-center justify-center rounded-full bg-blue-100 text-blue-600 hover:bg-blue-600 hover:text-white transition-colors shadow focus:outline-none focus:ring-2 focus:ring-blue-400"
         aria-label="Show rubric"
-        onClick={() => setOpen(true)}
+        onClick={handleClick}
       >
         <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
           <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" />
@@ -114,40 +79,6 @@ function Tooltip({ text, label }: { text: string, label?: string }) {
           <circle cx="12" cy="8" r="1" fill="currentColor" />
         </svg>
       </button>
-      {open && typeof window !== 'undefined' && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm transition-opacity duration-300" onClick={close}>
-          <div
-            className="bg-white rounded-2xl shadow-2xl border border-blue-100 max-w-lg w-full p-0 relative overflow-y-auto max-h-[80vh] animate-fade-in"
-            onClick={e => e.stopPropagation()}
-            style={{ boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.17)' }}
-          >
-            <div className="flex items-center justify-between px-6 py-4 bg-blue-50 rounded-t-2xl border-b border-blue-100">
-              <span className="font-semibold text-blue-700 text-lg">{label ? `${label} Criteria Description` : 'Criteria Description'}</span>
-              <button
-                type="button"
-                className="text-blue-400 hover:text-blue-700 text-2xl font-bold focus:outline-none"
-                onClick={close}
-                aria-label="Close rubric"
-              >
-                &times;
-              </button>
-            </div>
-            <div className="px-6 py-4 text-gray-900 whitespace-pre-line text-sm">
-              {text}
-            </div>
-            <div className="flex justify-end px-6 pb-4">
-              <button
-                type="button"
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded font-semibold text-sm"
-                onClick={close}
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
     </span>
   );
 }
@@ -193,7 +124,11 @@ function AnnotatePageContent() {
   const [validationMessage, setValidationMessage] = useState('');
   const [encouragementMessage, setEncouragementMessage] = useState('');
   const [showCelebration, setShowCelebration] = useState(false);
-  const [showFullConversation, setShowFullConversation] = useState(false);
+  // Add active tab state for the new tabbed interface
+  const [activeTab, setActiveTab] = useState<string>('safety_and_biasness');
+  // Add panel state for slide-out descriptions
+  const [openPanel, setOpenPanel] = useState<{ critId: string; position: { top: number; left: number } } | null>(null);
+  // Remove showFullConversation state since we'll always show full conversation
 
   // Fetch the specific conversation by conversationId
   useEffect(() => {
@@ -255,18 +190,7 @@ function AnnotatePageContent() {
     }
   }, []);
 
-  // Keyboard shortcut for toggling full conversation view
-  useEffect(() => {
-    const handleKeyPress = (e: KeyboardEvent) => {
-      if (e.key === 'c' && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        setShowFullConversation(!showFullConversation);
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyPress);
-    return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [showFullConversation]);
+  // Remove keyboard shortcut since we always show full conversation now
 
   // Restore state from backend or localStorage on mount
   useEffect(() => {
@@ -287,6 +211,7 @@ function AnnotatePageContent() {
           setTurnComments(data.turnComments || []);
           setConversationSkipped(data.conversationSkipped || false);
           setTurnSkipped(data.turnSkipped || []);
+          setActiveTab(data.activeTab || 'safety_and_biasness');
           setLoading(false);
           return;
         }
@@ -305,6 +230,7 @@ function AnnotatePageContent() {
         setTurnComments(data.turnComments || []);
         setConversationSkipped(data.conversationSkipped || false);
         setTurnSkipped(data.turnSkipped || []);
+        setActiveTab(data.activeTab || 'safety_and_biasness');
       }
       setLoading(false);
     }
@@ -321,9 +247,10 @@ function AnnotatePageContent() {
       turnComments,
       conversationSkipped,
       turnSkipped,
+      activeTab,
     };
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data));
-  }, [step, turnIndex, conversationRatings, turnRatings, conversationComment, turnComments, conversationSkipped, turnSkipped]);
+  }, [step, turnIndex, conversationRatings, turnRatings, conversationComment, turnComments, conversationSkipped, turnSkipped, activeTab]);
 
   // Auto-save state to backend on change (debounced)
   useEffect(() => {
@@ -343,16 +270,18 @@ function AnnotatePageContent() {
           turnComments,
           turnSkipped,
           conversationSkipped,
+          activeTab,
           status: 'in_progress',
         }),
       });
     }, 1000); // 1s debounce
     return () => clearTimeout(timeout);
-  }, [conversationId, projectId, session, conversationRatings, conversationComment, turnRatings, turnComments, turnSkipped, conversationSkipped]);
+  }, [conversationId, projectId, session, conversationRatings, conversationComment, turnRatings, turnComments, turnSkipped, conversationSkipped, activeTab]);
 
   // Auto-clear skip/flag if all required ratings are filled
   useEffect(() => {
-    if ((step === 'conversation' || isSingleTurnConversation) && conversationSkipped && !conversationCriteria.some((c) => conversationRatings[c.id] == null)) {
+    const allConversationCriteria = conversationCriteriaCategories.flatMap(category => category.criteria);
+    if ((step === 'conversation' || isSingleTurnConversation) && conversationSkipped && !allConversationCriteria.some((c) => conversationRatings[c.id] == null)) {
       setConversationSkipped(false);
     }
     if (step === 'turns' && turnSkipped[turnIndex] && !turnCriteria.some((c) => turnRatings[turnIndex]?.[c.id] == null)) {
@@ -452,7 +381,8 @@ function AnnotatePageContent() {
     
     // Check if all conversation criteria are rated
     const newRatings = { ...conversationRatings, [id]: value };
-    const allRated = conversationCriteria.every(c => newRatings[c.id] != null);
+    const allConversationCriteria = conversationCriteriaCategories.flatMap(category => category.criteria);
+    const allRated = allConversationCriteria.every(c => newRatings[c.id] != null);
     if (allRated) {
       showEncouragement('conversation');
     }
@@ -485,9 +415,32 @@ function AnnotatePageContent() {
       return updated;
     });
   };
+
+  const handlePanelOpen = (critId: string, position: { top: number; left: number }) => {
+    setOpenPanel({ critId, position });
+  };
+
+  const handlePanelClose = () => {
+    setOpenPanel(null);
+  };
+
+  // Close panel when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (openPanel && !(event.target as Element).closest('.panel-content')) {
+        setOpenPanel(null);
+      }
+    };
+
+    if (openPanel) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [openPanel]);
   const checkValidation = () => {
     if (step === 'conversation' || isSingleTurnConversation) {
-      const missingCriteria = conversationCriteria.filter(c => conversationRatings[c.id] == null);
+      const allConversationCriteria = conversationCriteriaCategories.flatMap(category => category.criteria);
+      const missingCriteria = allConversationCriteria.filter(c => conversationRatings[c.id] == null);
       if (missingCriteria.length > 0) {
         return `Almost there! Just a few more criteria to rate for this conversation.\n\nMissing: ${missingCriteria.map(c => c.label).join(', ')}`;
       }
@@ -533,7 +486,6 @@ function AnnotatePageContent() {
       }
     } else if (step === 'turns' && turnIndex === turnPairs.length - 1) {
       setStep('conversation');
-      setShowFullConversation(false); // Hide full conversation view when moving to conversation level
       showEncouragement('milestone'); // Moving to conversation step
     } else if (step === 'conversation') {
       setShowFinishDialog(true);
@@ -600,6 +552,7 @@ function AnnotatePageContent() {
             turnComments,
             turnSkipped,
             conversationSkipped,
+            activeTab,
             status: 'completed',
           }),
         });
@@ -614,6 +567,7 @@ function AnnotatePageContent() {
         setTurnComments([]);
         setConversationSkipped(false);
         setTurnSkipped([]);
+        setActiveTab('safety_and_biasness');
         localStorage.removeItem(LOCAL_STORAGE_KEY);
         // Redirect back to project detail page
         router.push(`/projects/${projectId}`);
@@ -702,18 +656,8 @@ function AnnotatePageContent() {
                   <h2 className="text-lg font-semibold text-blue-700">
                     {isSingleTurnConversation ? 'Single Turn Conversation' : `Turn ${turnIndex + 1} of ${turnPairs.length}`}
                   </h2>
-                  <button
-                    onClick={() => setShowFullConversation(!showFullConversation)}
-                    className="flex items-center gap-2 px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition-colors"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                    </svg>
-                    {showFullConversation ? 'Hide Full Conversation' : 'View Full Conversation'}
-                    <span className="text-xs text-gray-500">(Ctrl+C)</span>
-                  </button>
                 </div>
+                
                 {/* Display turnId for the current turn pair */}
                 <div className="mb-2 text-xs text-gray-500">
                   <span>Turn IDs: </span>
@@ -722,146 +666,251 @@ function AnnotatePageContent() {
                       {turn.role}: {turn.turnId ?? '(no id)'}
                     </span>
                   ))}
-                                  </div>
-                  {showFullConversation && (
-                    <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-lg shadow-sm">
-                      <h3 className="text-sm font-semibold text-amber-800 mb-3 flex items-center gap-2">
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                        Full Conversation Context
-                      </h3>
-                      <div className="space-y-2 max-h-80 overflow-y-auto text-xs">
-                        {conversation.map((turn, idx) => {
-                          // Check if this turn is part of the current turn being annotated
-                          const currentTurnTurns = turnPairs[turnIndex] || [];
-                          const isCurrentTurn = currentTurnTurns.some(t => t.turnId === turn.turnId);
-                          
-                          return (
-                            <div key={idx} className={`flex items-start gap-2 p-2 rounded ${
-                              turn.role === 'user' ? 'bg-blue-50' : 
-                              turn.role === 'assistant' ? 'bg-green-50' :
-                              turn.role === 'tool' ? 'bg-purple-50' :
-                              'bg-gray-50'
-                            } ${isCurrentTurn ? 'ring-2 ring-blue-400 bg-blue-100' : ''}`}>
-                              <span className={`font-bold capitalize text-xs ${
-                                turn.role === 'user' ? 'text-blue-700' : 
-                                turn.role === 'assistant' ? 'text-green-700' :
-                                turn.role === 'tool' ? 'text-purple-700' :
-                                'text-gray-700'
-                              }`}>{turn.role}:</span>
-                              <span className="text-gray-800 text-xs line-clamp-2">
-                                {typeof turn.content === 'string' ? (turn.content.length > 100 ? `${turn.content.substring(0, 100)}...` : turn.content) : '[No content]'}
-                              </span>
-                              {isCurrentTurn && (
-                                <span className="ml-auto text-blue-600 text-xs font-semibold">← Ongoing Conversation</span>
-                              )}
+                </div>
+                
+                {/* Full conversation with current turn highlighted */}
+                <div className="space-y-3 pr-2">
+                  {conversation.map((turn, idx) => {
+                    // Check if this turn is part of the current turn being annotated
+                    const currentTurnTurns = turnPairs[turnIndex] || [];
+                    const isCurrentTurn = currentTurnTurns.some(t => t.turnId === turn.turnId);
+                    
+                                          return (
+                        <div key={idx} className={`flex items-start gap-2 p-3 rounded-lg transition-all duration-200 ${
+                          isCurrentTurn ? (
+                            turn.role === 'user' ? 'bg-blue-50 border border-blue-200' : 
+                            turn.role === 'assistant' ? 'bg-green-50 border border-green-200' :
+                            turn.role === 'tool' ? 'bg-purple-50 border border-purple-200' :
+                            'bg-gray-50 border border-gray-200'
+                          ) : 'bg-gray-100 border border-gray-200'
+                        } ${isCurrentTurn ? 'ring-2 ring-blue-400 shadow-md' : 'opacity-60'}`}>
+                          <span className={`font-bold capitalize ${
+                            isCurrentTurn ? (
+                              turn.role === 'user' ? 'text-blue-700' : 
+                              turn.role === 'assistant' ? 'text-green-700' :
+                              turn.role === 'tool' ? 'text-purple-700' :
+                              'text-gray-700'
+                            ) : 'text-gray-500'
+                          }`}>{turn.role}:</span>
+                        <div className="flex-1">
+                          <div className="text-gray-800">
+                            <ReactMarkdown>{turn.content}</ReactMarkdown>
+                          </div>
+                          {turn.tool_calls && turn.tool_calls.length > 0 && (
+                            <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-sm">
+                              <div className="font-semibold text-yellow-800 mb-1">Tool Calls:</div>
+                              {turn.tool_calls.map((toolCall, toolIdx: number) => (
+                                <div key={toolIdx} className="mb-1">
+                                  <span className="font-medium text-yellow-700">Function:</span> {toolCall.function.name}
+                                  <br />
+                                  <span className="font-medium text-yellow-700">Arguments:</span> {toolCall.function.arguments}
+                                </div>
+                              ))}
                             </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                  {showFullConversation && (
-                    <div className="mb-4 p-3 bg-blue-100 border border-blue-300 rounded-lg">
-                      <div className="flex items-center gap-2 text-blue-800 text-sm font-semibold">
-                        {/* <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                        </svg> */}
-                        ↓ Below is the Current Turn to be Rated ↓
-                      </div>
-                    </div>
-                  )}
-                  <div className="space-y-3 pr-2">
-                    {turnPairs[turnIndex].map((turn, idx) => (
-                    <div key={idx} className={`flex items-start gap-2 p-3 rounded-lg border-2 ${
-                      turn.role === 'user' ? 'bg-blue-50 border-blue-200' : 
-                      turn.role === 'assistant' ? 'bg-green-50 border-green-200' :
-                      turn.role === 'tool' ? 'bg-purple-50 border-purple-200' :
-                      'bg-gray-50 border-gray-200'
-                    } ${idx === 1 ? 'ring-2 ring-blue-400' : ''}`}> 
-                      <span className={`font-bold capitalize ${
-                        turn.role === 'user' ? 'text-blue-700' : 
-                        turn.role === 'assistant' ? 'text-green-700' :
-                        turn.role === 'tool' ? 'text-purple-700' :
-                        'text-gray-700'
-                      }`}>{turn.role}:</span>
-                      <div className="flex-1">
-                        <div className="text-gray-800">
-                          <ReactMarkdown>{turn.content}</ReactMarkdown>
+                          )}
                         </div>
-                        {turn.tool_calls && turn.tool_calls.length > 0 && (
-                          <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-sm">
-                            <div className="font-semibold text-yellow-800 mb-1">Tool Calls:</div>
-                            {turn.tool_calls.map((toolCall, toolIdx: number) => (
-                              <div key={toolIdx} className="mb-1">
-                                <span className="font-medium text-yellow-700">Function:</span> {toolCall.function.name}
-                                <br />
-                                <span className="font-medium text-yellow-700">Arguments:</span> {toolCall.function.arguments}
-                              </div>
-                            ))}
+                        {isCurrentTurn && (
+                          <div className="ml-2 px-2 py-1 bg-blue-600 text-white text-xs font-semibold rounded-full">
+                            Current
                           </div>
                         )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </>
             )}
           </div>
         </section>
         <div className="hidden md:block w-px bg-gray-200 mx-2"></div>
-        <section className="md:w-5/12 w-full flex flex-col">
+        <section className="md:w-7/12 w-full flex flex-col">
           <div className="bg-white shadow-lg rounded-xl p-6 flex flex-col">
 
             <h3 className="font-semibold mb-4 text-gray-700">{(step === 'conversation' || isSingleTurnConversation) ? 'Conversation-level Criteria' : 'Turn-level Criteria'}</h3>
-            <div className="mb-6 space-y-6">
-              {((step === 'conversation' || isSingleTurnConversation) ? conversationCriteria : turnCriteria).map((crit) => (
-                <div key={crit.id} className="flex flex-col gap-2">
-                  <label className="font-medium text-gray-800 flex items-center">
-                    {crit.label}
-                    <Tooltip text={crit.description} label={crit.label} />
-                  </label>
-                  <div className="flex gap-3 mt-2">
-                    {crit.type === 'rating' && crit.options.map((opt: number) => (
-                      <div key={opt} className="relative inline-block">
-                        <button
-                          type="button"
-                          className={`w-8 h-8 flex items-center justify-center rounded-full border-2 transition-all duration-200 ease-out shadow-sm mx-1 transform hover:scale-110 active:scale-95
-                            ${
-                              ((step === 'conversation' || isSingleTurnConversation)
-                                ? conversationRatings[crit.id] === opt
-                                : turnRatings[turnIndex]?.[crit.id] === opt)
-                                ? 'bg-blue-500 border-blue-600 text-white font-bold shadow-lg scale-105'
-                                : 'bg-white border-gray-300 text-gray-400 hover:border-blue-400 hover:text-blue-600 hover:shadow-md'
-                            }
-                          `}
-                          onClick={() =>
-                            (step === 'conversation' || isSingleTurnConversation)
-                              ? handleConversationRating(crit.id, opt)
-                              : handleTurnRating(crit.id, opt)
-                          }
-                          aria-pressed={
-                            (step === 'conversation' || isSingleTurnConversation)
-                              ? conversationRatings[crit.id] === opt
-                              : turnRatings[turnIndex]?.[crit.id] === opt
-                          }
-                          onMouseEnter={() => setHovered({ critId: crit.id, value: opt })}
-                          onMouseLeave={() => setHovered(null)}
-                        >
-                          {opt}
-                        </button>
-                        {hovered && hovered.critId === crit.id && hovered.value === opt && crit.ratingDescriptions && crit.ratingDescriptions[String(opt)] && (
-                          <div className="absolute z-50 left-1/2 -translate-x-1/2 mt-2 w-64 bg-white border border-gray-300 rounded-lg shadow-lg p-2 text-xs text-gray-800 whitespace-pre-line">
-                            {crit.ratingDescriptions[String(opt)]}
-                          </div>
-                        )}
+            
+            {/* Tab Navigation */}
+            <div className="flex flex-wrap gap-1 mb-6 border-b border-gray-200">
+              {conversationCriteriaCategories.map((category) => {
+                // Calculate completion status for this category
+                const categoryCriteria = category.criteria;
+                const completedCount = categoryCriteria.filter(crit => {
+                  if (step === 'conversation' || isSingleTurnConversation) {
+                    return conversationRatings[crit.id] != null;
+                  } else {
+                    return turnRatings[turnIndex]?.[crit.id] != null;
+                  }
+                }).length;
+                const isCompleted = completedCount === categoryCriteria.length;
+                const hasPartialProgress = completedCount > 0 && !isCompleted;
+                
+                return (
+                  <button
+                    key={category.id}
+                    onClick={() => setActiveTab(category.id)}
+                    className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-all duration-200 relative ${
+                      activeTab === category.id
+                        ? 'bg-blue-600 text-white shadow-md'
+                        : isCompleted
+                        ? 'bg-green-100 text-green-800 hover:bg-green-200 border border-green-300'
+                        : hasPartialProgress
+                        ? 'bg-yellow-100 text-yellow-800 hover:bg-yellow-200 border border-yellow-300'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200 hover:text-gray-900'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span>{category.label}</span>
+                      {isCompleted && (
+                        <svg className="w-4 h-4 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                        </svg>
+                      )}
+                      {hasPartialProgress && (
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs font-bold">{completedCount}/{categoryCriteria.length}</span>
+                        </div>
+                      )}
+                    </div>
+                    {/* Progress indicator */}
+                    {hasPartialProgress && (
+                      <div className="absolute bottom-0 left-0 right-0 h-1 bg-yellow-300 rounded-b-lg">
+                        <div 
+                          className="h-full bg-yellow-500 rounded-b-lg transition-all duration-300"
+                          style={{ width: `${(completedCount / categoryCriteria.length) * 100}%` }}
+                        />
                       </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
+                    )}
+                  </button>
+                );
+              })}
             </div>
+
+            {/* Tab Content */}
+            <div className="mb-6 space-y-6">
+              {(() => {
+                const currentCriteria = conversationCriteriaCategories.find(cat => cat.id === activeTab)?.criteria || [];
+                
+                // Check if all criteria in current tab are completed
+                const completedCount = currentCriteria.filter(crit => {
+                  if (step === 'conversation' || isSingleTurnConversation) {
+                    return conversationRatings[crit.id] != null;
+                  } else {
+                    return turnRatings[turnIndex]?.[crit.id] != null;
+                  }
+                }).length;
+                const isTabCompleted = completedCount === currentCriteria.length;
+                
+                return (
+                  <>
+                    {/* Tab completion indicator */}
+                    {isTabCompleted && (
+                      <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+                        <div className="flex items-center gap-2 text-green-700">
+                          <svg className="w-5 h-5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                          </svg>
+                          <span className="font-medium">All criteria in this category have been rated!</span>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {currentCriteria.map((crit) => {
+                      const isRated = (step === 'conversation' || isSingleTurnConversation)
+                        ? conversationRatings[crit.id] != null
+                        : turnRatings[turnIndex]?.[crit.id] != null;
+                      
+                      return (
+                        <div key={crit.id} className="flex flex-col gap-2">
+                          <label className="font-medium text-gray-800 flex items-center">
+                            {crit.label}
+                            {isRated && (
+                              <svg className="w-4 h-4 ml-2 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                              </svg>
+                            )}
+                            <Tooltip text={crit.description} label={crit.label} critId={crit.id} onPanelOpen={handlePanelOpen} />
+                          </label>
+                          <div className="flex gap-3 mt-2">
+                            {crit.type === 'rating' && crit.options.map((opt: number) => (
+                              <div key={opt} className="relative inline-block">
+                                <button
+                                  type="button"
+                                  className={`w-8 h-8 flex items-center justify-center rounded-full border-2 transition-all duration-200 ease-out shadow-sm mx-1 transform hover:scale-110 active:scale-95
+                                    ${
+                                      ((step === 'conversation' || isSingleTurnConversation)
+                                        ? conversationRatings[crit.id] === opt
+                                        : turnRatings[turnIndex]?.[crit.id] === opt)
+                                        ? 'bg-blue-500 border-blue-600 text-white font-bold shadow-lg scale-105'
+                                        : 'bg-white border-gray-300 text-gray-400 hover:border-blue-400 hover:text-blue-600 hover:shadow-md'
+                                    }
+                                  `}
+                                  onClick={() =>
+                                    (step === 'conversation' || isSingleTurnConversation)
+                                      ? handleConversationRating(crit.id, opt)
+                                      : handleTurnRating(crit.id, opt)
+                                  }
+                                  aria-pressed={
+                                    (step === 'conversation' || isSingleTurnConversation)
+                                      ? conversationRatings[crit.id] === opt
+                                      : turnRatings[turnIndex]?.[crit.id] === opt
+                                  }
+                                  onMouseEnter={() => setHovered({ critId: crit.id, value: opt })}
+                                  onMouseLeave={() => setHovered(null)}
+                                >
+                                  {opt}
+                                </button>
+                                {hovered && hovered.critId === crit.id && hovered.value === opt && crit.ratingDescriptions && crit.ratingDescriptions[String(opt)] && (
+                                  <div className="absolute z-50 left-1/2 -translate-x-1/2 mt-2 w-64 bg-white border border-gray-300 rounded-lg shadow-lg p-2 text-xs text-gray-800 whitespace-pre-line">
+                                    {crit.ratingDescriptions[String(opt)]}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </>
+                );
+              })()}
+            </div>
+
+            {/* Slide-out Panel for Criterion Descriptions */}
+            {openPanel && (
+              <div 
+                className="fixed z-50 bg-white border border-gray-300 rounded-lg shadow-xl p-4 max-w-md w-full animate-slide-in panel-content"
+                style={{
+                  top: `${openPanel.position.top}px`,
+                  left: `${openPanel.position.left}px`,
+                  maxHeight: '400px',
+                  overflowY: 'auto'
+                }}
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="font-semibold text-gray-800 text-sm">
+                    {(() => {
+                      const currentCriteria = conversationCriteriaCategories.find(cat => cat.id === activeTab)?.criteria || [];
+                      const criterion = currentCriteria.find(c => c.id === openPanel.critId);
+                      return criterion?.label || 'Criteria Description';
+                    })()}
+                  </h4>
+                  <button
+                    type="button"
+                    className="text-gray-400 hover:text-gray-600 text-lg font-bold focus:outline-none"
+                    onClick={handlePanelClose}
+                    aria-label="Close description"
+                  >
+                    &times;
+                  </button>
+                </div>
+                <div className="text-gray-700 text-sm whitespace-pre-line">
+                  {(() => {
+                    const currentCriteria = conversationCriteriaCategories.find(cat => cat.id === activeTab)?.criteria || [];
+                    const criterion = currentCriteria.find(c => c.id === openPanel.critId);
+                    return criterion?.description || '';
+                  })()}
+                </div>
+              </div>
+            )}
             <div className="mb-6">
               <label className="font-medium text-gray-800 flex items-center mb-1">
                 {(step === 'conversation' || isSingleTurnConversation) ? 'Comment (optional)' : 'Turn Comment (optional)'}
