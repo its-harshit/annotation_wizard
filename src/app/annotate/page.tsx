@@ -3,6 +3,7 @@ import React, { useState, useEffect, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { conversationCriteriaCategories, turnCriteria } from '../criteria.config';
+import { useTimer } from '../contexts/TimerContext';
 import ReactMarkdown from 'react-markdown';
 import { createPortal } from 'react-dom';
 
@@ -128,6 +129,8 @@ function AnnotatePageContent() {
   const [activeTab, setActiveTab] = useState<string>('safety_and_biasness');
   // Add panel state for slide-out descriptions
   const [openPanel, setOpenPanel] = useState<{ critId: string; position: { top: number; left: number } } | null>(null);
+  // Timer context
+  const { startAnnotation, stopAnnotation, getAnnotationDuration, pauseAnnotation } = useTimer();
   // Remove showFullConversation state since we'll always show full conversation
 
   // Fetch the specific conversation by conversationId
@@ -437,6 +440,111 @@ function AnnotatePageContent() {
       return () => document.removeEventListener('mousedown', handleClickOutside);
     }
   }, [openPanel]);
+
+  // Start annotation timer when page loads
+  useEffect(() => {
+    if (conversationId) {
+      console.log('Annotation page loaded, starting timer for conversation:', conversationId);
+      startAnnotation(conversationId);
+    }
+    return () => {
+      console.log('Annotation page unmounting, stopping timer...');
+      stopAnnotation();
+    };
+  }, [conversationId, startAnnotation, stopAnnotation]); // Add all dependencies
+
+  // Auto-save functionality
+  useEffect(() => {
+    const autoSave = async () => {
+      if (!conversationId || !projectId || !session?.user?.email) return;
+      
+      try {
+        const annotationData = {
+          conversationId,
+          projectId,
+          userId: session.user.email,
+          step,
+          turnIndex,
+          conversationRatings,
+          turnRatings,
+          conversationComment,
+          turnComments,
+          conversationSkipped,
+          turnSkipped,
+          activeTab,
+          completed: false,
+          updatedAt: new Date().toISOString()
+        };
+        
+        await fetch('/api/annotations/item', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(annotationData)
+        });
+        
+        console.log('Auto-save completed');
+      } catch (error) {
+        console.error('Auto-save failed:', error);
+      }
+    };
+
+    const interval = setInterval(autoSave, 30000); // Auto-save every 30 seconds
+    return () => clearInterval(interval);
+  }, [conversationId, projectId, session?.user?.email, step, turnIndex, conversationRatings, turnRatings, conversationComment, turnComments, conversationSkipped, turnSkipped, activeTab]);
+
+  // Navigation prevention
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      // Check if there's unsaved progress
+      const hasProgress = Object.keys(conversationRatings).length > 0 || 
+                         turnRatings.some(ratings => Object.keys(ratings).length > 0) ||
+                         conversationComment.trim() !== '' ||
+                         turnComments.some(comment => comment.trim() !== '');
+      
+      if (hasProgress) {
+        e.preventDefault();
+        e.returnValue = ''; // This shows the browser's default "Leave Site?" dialog
+        return '';
+      }
+    };
+
+    const handleUnload = async () => {
+      // Final save attempt when page is actually unloading
+      if (!conversationId || !projectId || !session?.user?.email) return;
+      
+      try {
+        const annotationData = {
+          conversationId,
+          projectId,
+          userId: session.user.email,
+          step,
+          turnIndex,
+          conversationRatings,
+          turnRatings,
+          conversationComment,
+          turnComments,
+          conversationSkipped,
+          turnSkipped,
+          activeTab,
+          completed: false,
+          updatedAt: new Date().toISOString()
+        };
+        
+        // Use sendBeacon for reliable delivery during page unload
+        navigator.sendBeacon('/api/annotations/item', JSON.stringify(annotationData));
+      } catch (error) {
+        console.error('Final save failed:', error);
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('unload', handleUnload);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('unload', handleUnload);
+    };
+  }, [conversationId, projectId, session?.user?.email, step, turnIndex, conversationRatings, turnRatings, conversationComment, turnComments, conversationSkipped, turnSkipped, activeTab]);
   const checkValidation = () => {
     if (step === 'conversation' || isSingleTurnConversation) {
       const allConversationCriteria = conversationCriteriaCategories.flatMap(category => category.criteria);
@@ -529,9 +637,14 @@ function AnnotatePageContent() {
   const handleFinish = async () => {
     setShowFinishDialog(false);
     
-    // Show subtle celebration
+    // Pause the annotation timer
+    pauseAnnotation();
+    
+    const annotationDuration = getAnnotationDuration();
+    
+    // Show subtle celebration with completion time
     setShowCelebration(true);
-    setEncouragementMessage("🎉 Congratulations! Annotation completed! 🎊");
+    setEncouragementMessage(`🎉 Congratulations! Annotation completed in ${annotationDuration}! 🎊`);
     
     // Hide celebration after 3 seconds and then save
     setTimeout(async () => {
@@ -599,12 +712,6 @@ function AnnotatePageContent() {
           <h1 className="text-2xl font-bold text-gray-800 tracking-tight">Annotation Wizard</h1>
           <div className="flex items-center gap-4">
             <span className="text-gray-500 text-sm">Step {currentStep} of {totalSteps}</span>
-            <button
-              className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-1 rounded font-semibold text-sm"
-              onClick={() => router.push(`/projects/${projectId}`)}
-            >
-              Exit
-            </button>
           </div>
         </div>
         <ProgressBar step={currentStep} total={totalSteps} />
