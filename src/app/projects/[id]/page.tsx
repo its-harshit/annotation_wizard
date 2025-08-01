@@ -19,6 +19,9 @@ export default function ProjectDetailPage() {
   const [newMember, setNewMember] = useState('');
   const [memberError, setMemberError] = useState('');
   const [memberSuccess, setMemberSuccess] = useState('');
+  const [deleteError, setDeleteError] = useState('');
+  const [deleteSuccess, setDeleteSuccess] = useState('');
+  const [deletingConversation, setDeletingConversation] = useState<string | null>(null);
   const userId = session?.user?.email;
   const isAdmin = session?.user ? ((session.user as { role?: string }).role) === 'admin' : false;
 
@@ -155,6 +158,45 @@ export default function ProjectDetailPage() {
     }
   }
 
+  // Delete conversation
+  async function handleDeleteConversation(conversationId: string) {
+    if (!confirm('Are you sure you want to delete this conversation? This action cannot be undone and will also delete any associated annotations.')) {
+      return;
+    }
+
+    setDeleteError('');
+    setDeleteSuccess('');
+    setDeletingConversation(conversationId);
+
+    try {
+      const res = await fetch('/api/conversations/delete', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          conversationId,
+          projectId,
+          userId
+        }),
+      });
+
+      if (res.ok) {
+        setDeleteSuccess('Conversation deleted successfully');
+        // Remove from local state
+        setConversations(prev => prev.filter(conv => conv._id !== conversationId));
+        // Also remove from annotations
+        setAnnotations(prev => prev.filter(ann => ann.conversationId !== conversationId));
+      } else {
+        const data = await res.json();
+        setDeleteError(data.error || 'Failed to delete conversation');
+      }
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to delete conversation';
+      setDeleteError(errorMessage);
+    } finally {
+      setDeletingConversation(null);
+    }
+  }
+
   if (loading) return <main className="min-h-screen flex items-center justify-center">Loading project...</main>;
   if (error) return <main className="min-h-screen flex items-center justify-center text-red-600">{error}</main>;
 
@@ -174,6 +216,28 @@ export default function ProjectDetailPage() {
           </button>
         </div>
       </div>
+      {/* Success/Error Messages */}
+      {deleteSuccess && (
+        <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+          <div className="flex items-center gap-2 text-green-700">
+            <svg className="w-5 h-5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+            </svg>
+            <span className="font-medium">{deleteSuccess}</span>
+          </div>
+        </div>
+      )}
+      {deleteError && (
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+          <div className="flex items-center gap-2 text-red-700">
+            <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+            </svg>
+            <span className="font-medium">{deleteError}</span>
+          </div>
+        </div>
+      )}
+
       {isAdmin && (
         <div className="flex justify-center items-start mb-8">
           <div className="bg-white rounded-2xl shadow-xl border border-blue-100 p-8 w-full max-w-md">
@@ -235,11 +299,12 @@ export default function ProjectDetailPage() {
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Snippet</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Status</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Action</th>
+                {isAdmin && <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Admin</th>}
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-100">
               {conversations.length === 0 && (
-                <tr><td colSpan={4} className="text-gray-500 px-4 py-6 text-center">No conversations in this project.</td></tr>
+                <tr><td colSpan={isAdmin ? 5 : 4} className="text-gray-500 px-4 py-6 text-center">No conversations in this project.</td></tr>
               )}
               {conversations.map((convo) => {
                 const status = getStatus(convo._id);
@@ -269,6 +334,31 @@ export default function ProjectDetailPage() {
                         Annotate
                       </button>
                     </td>
+                    {isAdmin && (
+                      <td className="px-4 py-2">
+                        <button
+                          className="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded flex items-center gap-1 text-sm font-semibold shadow disabled:opacity-50 disabled:cursor-not-allowed"
+                          onClick={() => handleDeleteConversation(convo._id)}
+                          disabled={deletingConversation === convo._id}
+                        >
+                          {deletingConversation === convo._id ? (
+                            <>
+                              <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                              </svg>
+                              Deleting...
+                            </>
+                          ) : (
+                            <>
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                              Delete
+                            </>
+                          )}
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 );
               })}
